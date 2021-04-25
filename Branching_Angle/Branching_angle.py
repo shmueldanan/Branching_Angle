@@ -1,4 +1,9 @@
 '''
+Created on 28 Feb 2021
+
+@author: danan
+'''
+'''
 Created on 14 Feb 2021
 
 @author: danan
@@ -6,6 +11,8 @@ Created on 14 Feb 2021
 import numpy as np
 import ONH_Localization as ONHLOC
 import ONH_Segmentation as ONHSEG
+import measure_branch_angle as MSA
+import Artery_Vein_Classify as AVC
 import Create_angle_mask as cmask
 import strel_func as strel
 import math
@@ -94,6 +101,19 @@ for region in regions:
     # Disconnected skeleton
     blob_region_skeleton = np.bitwise_xor(np.bitwise_and(blob_skeleton,blob_skeleton_bifurc_points>0),blob_skeleton)
     
+    # Artery/Vein Classification
+    art_vein_class,pixel_intense = AVC.Artery_Vein_Classify(blob_region_skeleton,blob_img,im_orig[:,:,2])
+    
+    plt.figure(1)
+    plt.imshow(im_orig[:,:,1])
+    
+    plt.figure(2)
+    plt.imshow(art_vein_class)
+    
+    plt.figure(3)
+    plt.imshow(pixel_intense)
+    
+    plt.show()
     
     ret_skel, labels_skel = cv2.connectedComponents(np.uint8(blob_region_skeleton))
     regions_skel = regionprops(labels_skel)
@@ -102,9 +122,11 @@ for region in regions:
     
     print(region.label)
     
-    if regions_skel.__len__()>1 and region.label ==2:
+    if regions_skel.__len__()>1 and region.label >1:
     
-        Branch_Struct = namedtuple("Branch_Struct", "branch_points_rows branch_points_cols thickness sgl_blob sgl_blob_skel")
+        Branch_Struct = namedtuple("Branch_Struct", "label branch_points_rows branch_points_cols thickness sgl_blob sgl_blob_skel centroid")
+        branch_struct = []
+
         
         for region_skel in regions_skel:
             
@@ -114,65 +136,69 @@ for region in regions:
             sgl_blob_skel_dilate = dilation(sgl_blob_skel,selem)
             sgl_blob = np.bitwise_and(sgl_blob_skel_dilate,blob_img)
             
-            thickness = np.sum(sgl_blob)/np.sum(sgl_blob_skel)
+            thickness = np.sum(sgl_blob)/(np.sum(sgl_blob_skel))
             print(thickness)
             
             #region_skel.orientation()
                                 
             branch_points_rows=np.where(sgl_blob_skel)[0]
             branch_points_cols=np.where(sgl_blob_skel)[1]
-            angle_half = 100
             
+            label = region.label
             # branches struct
+            centroid = region_skel.centroid
             
-            branch_struct = []
             
-            branch_struct.append(Branch_Struct(branch_points_rows, branch_points_cols, thickness, sgl_blob, sgl_blob_skel))
             
-            '''
-            while angle_half>5 : 
-                
-                vector_1 = [branch_points_rows[0] - branch_points_rows[-1], branch_points_cols[0] - branch_points_cols[-1]]
-                
-                
-              
-                
-                vector_1 = [branch_points_rows[-1], branch_points_cols[-1]]
-                vector_2 = [branch_points_rows[0], branch_points_cols[0]]
-                unit_vector_1 = vector_1 / np.linalg.norm(vector_1)
-                unit_vector_2 = vector_2 / np.linalg.norm(vector_2)
-                dot_product = np.dot(unit_vector_1, unit_vector_2)
-                angle_all = np.arccos(dot_product)
-                
-                branch_points_rows = np.array_split(branch_points_rows,2)[1]
-                branch_points_cols = np.array_split(branch_points_cols,2)[1]
-                
-                
-                vector_2 = [branch_points_rows[0] - branch_points_rows[-1], branch_points_cols[0] - branch_points_cols[-1]]
-                unit_vector_1 = vector_1 / np.linalg.norm(vector_1)
-                unit_vector_2 = vector_2 / np.linalg.norm(vector_2)
-                dot_product = np.dot(unit_vector_1, unit_vector_2)
-                angle_half = np.arccos(dot_product)
-                
-                #branch_angle_diff = math.degrees(angle_all) - math.degrees(angle_half)
-               
-                
-                
-            plt.figure(4)
-            plt.imshow(dst>0, cmap='gray')
             
-            plt.figure(5)
-            plt.imshow(blob_skeleton, cmap='gray')
+            
+            branch_struct.append(Branch_Struct(label,branch_points_rows, branch_points_cols, thickness, sgl_blob, sgl_blob_skel, centroid))
+            
         
-            plt.figure(6)
-            plt.imshow(sgl_blob, cmap='gray')
-            
-            plt.figure(7)
-            plt.imshow(blob_img , cmap='gray')
+        # Go over all branching points in the current Blob
+        Blob_branch_points = np.multiply(blob_skeleton_bifurc_points, blob_skeleton) > 1
+        ret_branch, labels_branch = cv2.connectedComponents(np.uint8(Blob_branch_points))
+        regions_branch = regionprops(labels_branch)
         
-            plt.show()
+        for region_branch in regions_branch:
+            
+            
+            branch_candidate = []
+            for i in range(len(branch_struct)):
+                j=0
+                while j < len(branch_struct[i].branch_points_rows):
+                    
+                    
+                    if math.sqrt(( branch_struct[i].branch_points_rows[j]-region_branch.centroid[0] )**2 + 
+                                  ( branch_struct[i].branch_points_cols[j]-region_branch.centroid[1] )**2 ) < 3:
+                        
+                        j=10000
+                        branch_candidate.append(i)
+                        
+                    j=j+1
+                
+            if len(branch_candidate)==3:
+                first_distance = math.sqrt((ONH_Center[0]-branch_struct[branch_candidate[0]].centroid[0] )**2 + (ONH_Center[1]-branch_struct[branch_candidate[0]].centroid[1] )**2)
+                second_distance = math.sqrt((ONH_Center[0]-branch_struct[branch_candidate[1]].centroid[0] )**2 + (ONH_Center[1]-branch_struct[branch_candidate[1]].centroid[1] )**2)
+                third_distance = math.sqrt((ONH_Center[0]-branch_struct[branch_candidate[2]].centroid[0] )**2 + (ONH_Center[1]-branch_struct[branch_candidate[2]].centroid[1] )**2)
+                
+                if first_distance<second_distance and first_distance<third_distance:
+                    Branching_angle = MSA.measure_branch_angle(branch_struct[branch_candidate[1]],branch_struct[branch_candidate[2]],region_branch)
+                elif second_distance<third_distance:
+                    Branching_angle = MSA.measure_branch_angle(branch_struct[branch_candidate[0]],branch_struct[branch_candidate[2]],region_branch)
+                else:
+                    Branching_angle = MSA.measure_branch_angle(branch_struct[branch_candidate[0]],branch_struct[branch_candidate[1]],region_branch)
+            '''      
+            if len(branch_candidate)==3:
+                if branch_struct[branch_candidate[0]].thickness>branch_struct[branch_candidate[1]].thickness and branch_struct[branch_candidate[0]].thickness>branch_struct[branch_candidate[2]].thickness:
+                    Branching_angle = MSA.measure_branch_angle(branch_struct[branch_candidate[1]],branch_struct[branch_candidate[2]],region_branch)
+                elif branch_struct[branch_candidate[1]].thickness>branch_struct[branch_candidate[2]].thickness:
+                    Branching_angle = MSA.measure_branch_angle(branch_struct[branch_candidate[0]],branch_struct[branch_candidate[2]],region_branch)
+                else:
+                    Branching_angle = MSA.measure_branch_angle(branch_struct[branch_candidate[0]],branch_struct[branch_candidate[1]],region_branch)
             '''
             
+            print("Branching Angle:" + str(Branching_angle))        
     
 plt.figure(1)
 plt.imshow(im_orig, cmap='gray')
